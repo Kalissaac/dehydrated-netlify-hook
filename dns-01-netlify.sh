@@ -29,9 +29,6 @@ deploy_challenge() {
   #   TXT record. For HTTP validation it is the value that is expected
   #   be found in the $TOKEN_FILENAME file.
 
-  # Simple example: Use nsupdate with local named
-  # printf 'server 127.0.0.1\nupdate add _acme-challenge.%s 300 IN TXT "%s"\nsend\n' "${DOMAIN}" "${TOKEN_VALUE}" | nsupdate -k /var/run/named/session.key
-
   local NETLIFY_ZONE_ID="$(find_netlify_zone_for_domain "${DOMAIN}")"
 
   if [ -z "${NETLIFY_ZONE_ID}" ]; then
@@ -39,7 +36,7 @@ deploy_challenge() {
     exit 1
   fi
 
-  netlify_api_request "POST" "/dns_zones/${NETLIFY_ZONE_ID}/dns_records" "{\"type\":\"TXT\",\"hostname\":\"_acme-challenge.${DOMAIN}\",\"value\":\"${TOKEN_VALUE}\"}"
+  netlify_api_request "POST" "/dns_zones/${NETLIFY_ZONE_ID}/dns_records" "{\"type\":\"TXT\",\"hostname\":\"_acme-challenge.${DOMAIN}\",\"value\":\"${TOKEN_VALUE}\"}" > /dev/null
 }
 
 clean_challenge() {
@@ -50,9 +47,6 @@ clean_challenge() {
   # files or DNS records that are no longer needed.
   #
   # The parameters are the same as for deploy_challenge.
-
-  # Simple example: Use nsupdate with local named
-  # printf 'server 127.0.0.1\nupdate delete _acme-challenge.%s TXT "%s"\nsend\n' "${DOMAIN}" "${TOKEN_VALUE}" | nsupdate -k /var/run/named/session.key
 
   local NETLIFY_ZONE_ID="$(find_netlify_zone_for_domain "${DOMAIN}")"
 
@@ -71,38 +65,32 @@ clean_challenge() {
     exit 1
   fi
 
-  netlify_api_request "DELETE" "/dns_zones/${NETLIFY_ZONE_ID}/dns_records/${NETLIFY_RECORD_ID}"
+  netlify_api_request "DELETE" "/dns_zones/${NETLIFY_ZONE_ID}/dns_records/${NETLIFY_RECORD_ID}" > /dev/null
 }
 
 netlify_api_request() {
-  local METHOD="${1}" REQUEST_PATH="${2}" BODY="${3}"
-  local CURL_RESULT=""
+  local METHOD="${1}" REQUEST_PATH="${2}" BODY="${3:-}"
   if [ -z "${BODY}" ]; then
-    CURL_RESULT="$( \
-      curl -H "User-Agent: dehydrated-netlify-hook" \
-          -H "Authorization: Bearer ${NETLIFY_TOKEN}" \
-          -X "${METHOD}" \
-          "https://api.netlify.com/api/v1/${REQUEST_PATH}" \
-    )"
+      curl -sS \
+        -H "User-Agent: dehydrated-netlify-hook" \
+        -H "Authorization: Bearer ${NETLIFY_TOKEN}" \
+        -X "${METHOD}" \
+        "https://api.netlify.com/api/v1/${REQUEST_PATH}"
   else
-    CURL_RESULT="$( \
-      curl -H "User-Agent: dehydrated-netlify-hook" \
-      -H "Authorization: Bearer ${NETLIFY_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -X "${METHOD}" \
-      -d "${BODY}" \
-      "https://api.netlify.com/api/v1/${REQUEST_PATH}" \
-    )"
+      curl -sS \
+        -H "User-Agent: dehydrated-netlify-hook" \
+        -H "Authorization: Bearer ${NETLIFY_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -X "${METHOD}" \
+        -d "${BODY}" \
+        "https://api.netlify.com/api/v1/${REQUEST_PATH}"
   fi
-  return "${CURL_RESULT}"
 }
 
 find_netlify_zone_for_domain() {
   local DOMAIN="${1}"
-  return "$( \
-    netlify_api_request "GET" "/dns_zones" | \
-    python3 -c "import sys, operator, json; zones = json.load(sys.stdin); closest_zone = max(((zone['id'], len(zone['name'])) for zone in zones if '${DOMAIN}'.endswith(zone['name'])), default=('', 0), key=operator.itemgetter(1)); print(closest_zone[0])" \
-  )"
+  netlify_api_request "GET" "/dns_zones" | \
+  python3 -c "import sys, operator, json; zones = json.load(sys.stdin); closest_zone = max(((zone['id'], len(zone['name'])) for zone in zones if '${DOMAIN}'.endswith(zone['name'])), default=('', 0), key=operator.itemgetter(1)); print(closest_zone[0])"
 }
 
 
@@ -110,4 +98,3 @@ HANDLER="$1"; shift
 if [[ "${HANDLER}" =~ ^(deploy_challenge|clean_challenge)$ ]]; then
   "$HANDLER" "$@"
 fi
-
